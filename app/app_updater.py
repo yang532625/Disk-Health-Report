@@ -193,7 +193,7 @@ def download_installer(
 
 
 def launch_installer(path: str, *, silent: bool = False) -> None:
-    """Abre el Setup. silent=True: actualización en segundo plano (sin asistente)."""
+    """Abre el Setup. silent=True: actualización elevada en segundo plano (sin asistente)."""
     path = os.path.abspath(path)
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
@@ -201,21 +201,37 @@ def launch_installer(path: str, *, silent: bool = False) -> None:
         os.startfile(path)  # noqa: S606 — Windows installer launch
         return
 
-    # /VERYSILENT: sin wizard; cierra la app y actualiza sobre la instalación existente.
-    args = [
-        path,
-        "/VERYSILENT",
-        "/SUPPRESSMSGBOXES",
-        "/NORESTART",
-        "/CLOSEAPPLICATIONS",
-        "/FORCECLOSEAPPLICATIONS",
-    ]
-    creation = 0
+    # PrivilegesRequired=admin: hace falta UAC. Popen sin elevación fallaba en silencio
+    # y la app se quedaba en la versión anterior.
+    params = (
+        "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
+        "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS"
+    )
     if sys.platform == "win32":
-        creation = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-        creation |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-    subprocess.Popen(  # noqa: S603 — trusted local Setup path
-        args,
+        import ctypes
+
+        rc = int(
+            ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "runas",
+                path,
+                params,
+                os.path.dirname(path) or None,
+                1,
+            )
+        )
+        # ShellExecute: >32 = éxito; 1223 / ERROR_CANCELLED ≈ usuario canceló UAC
+        if rc <= 32:
+            if rc in (1223, 0):
+                raise RuntimeError("UAC cancelled")
+            raise RuntimeError(f"Installer launch failed (ShellExecute={rc})")
+        return
+
+    creation = 0
+    creation |= getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    creation |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    subprocess.Popen(  # noqa: S603
+        [path] + params.split(),
         cwd=os.path.dirname(path) or None,
         close_fds=True,
         creationflags=creation,

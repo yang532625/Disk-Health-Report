@@ -3,8 +3,12 @@
 
 Usa este archivo (doble clic):
 
-  INSTALADOR_DiskHealthReport_v1.24.3_x64.exe
+  INSTALADOR_DiskHealthReport_v1.24.4_x64.exe
 
 Misma copia en release\DiskHealthReport_Setup_x64.exe
 Descarga en la nube:
   https://github.com/yang532625/Disk-Health-Report/releases
+
+IMPORTANTE si aún tienes v1.24.2:
+  Instala este Setup una vez a mano (el actualizador viejo
+  no elevaba UAC y no aplicaba la versión nueva).

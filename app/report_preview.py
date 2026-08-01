@@ -8,15 +8,13 @@ import shutil
 import tempfile
 import tkinter as tk
 import tkinter.messagebox as messagebox
-from datetime import datetime
-from tkinter import filedialog
 from typing import Callable, Optional
 
 import customtkinter as ctk
 
 from disk_service import get_reports_dir, load_settings, resolve_report_day_dir, save_settings
 from i18n import t
-from report_builder import build_report_pdf_path, exportar_pdf, generar_html
+from report_builder import build_report_pdf_path, build_screenshot_path, exportar_pdf, generar_html
 from share_utils import copy_to_clipboard, open_file_in_explorer, whatsapp_share_summary
 from smart_parser import DiskReport
 from ui_theme import ui_font
@@ -460,7 +458,7 @@ class ReportPreviewFrame(ctk.CTkFrame):
 
     # --------------------------- Export ---------------------------
     def _screenshot(self):
-        """Guarda una captura PNG del reporte (páginas PDF renderizadas)."""
+        """Guarda PNG del reporte en la carpeta del día (Marca_SN.png)."""
         try:
             import pymupdf as fitz
             from PIL import Image
@@ -487,20 +485,8 @@ class ReportPreviewFrame(ctk.CTkFrame):
                 canvas.paste(im, (x, y))
                 y += im.height + gap
 
-            serial = (self.report.serial or "drive").replace(" ", "_")
-            default_name = f"screenshot_{serial}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            initial_dir = get_reports_dir()
-            os.makedirs(initial_dir, exist_ok=True)
-            path = filedialog.asksaveasfilename(
-                parent=self,
-                title=t("screenshot", self.lang),
-                initialdir=initial_dir,
-                initialfile=default_name,
-                defaultextension=".png",
-                filetypes=[("PNG", "*.png")],
-            )
-            if not path:
-                return
+            output_dir = resolve_report_day_dir(get_reports_dir())
+            path = build_screenshot_path(self.report, output_dir, self.lang)
             canvas.save(path, format="PNG")
             messagebox.showinfo(
                 t("screenshot_ok", self.lang),

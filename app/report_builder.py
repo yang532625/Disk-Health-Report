@@ -520,6 +520,12 @@ def build_report_pdf_path(report: DiskReport, output_dir: str, lang: str = "es")
     return os.path.join(output_dir, f"{base_name}.pdf")
 
 
+def build_screenshot_path(report: DiskReport, output_dir: str, lang: str = "es") -> str:
+    """Misma estructura que el PDF: {marca}_{SN}.png en la carpeta del día."""
+    pdf = build_report_pdf_path(report, output_dir, lang)
+    return os.path.splitext(pdf)[0] + ".png"
+
+
 def build_report_paths(report: DiskReport, output_dir: str, lang: str = "es") -> tuple[str, str]:
     """Compat: (pdf_path, html_path). El HTML ya no se escribe al exportar."""
     pdf_path = build_report_pdf_path(report, output_dir, lang)

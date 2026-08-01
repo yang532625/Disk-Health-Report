@@ -70,6 +70,7 @@ STRINGS = {
         "update_progress_done": "Actualización lista. La app se reiniciará…",
         "update_busy": "Actualización en curso…",
         "update_failed": "No se pudo actualizar.",
+        "update_uac_cancelled": "Se canceló el aviso de administrador (UAC). Sin eso no se puede instalar la actualización.",
         "update_pct": "{pct}%",
         "fit_width": "Ajustar ancho",
         "fit_page": "Ajustar página",
@@ -139,8 +140,10 @@ STRINGS = {
         "footer_expand": "Mostrar barra de estado",
         "footer_collapse": "Ocultar barra de estado",
         "admin_badge_ok": "Administrador",
-        "admin_badge_no": "Sin privilegios de administrador",
+        "admin_badge_no": "Clic: elevar",
         "admin_badge_tooltip": "Reinicia la aplicación como administrador para formatear discos y usar herramientas avanzadas.",
+        "admin_elevate_title": "Ejecutar como administrador",
+        "admin_elevate_body": "Algunas herramientas (formatear, Ventoy, etc.) necesitan administrador.\n\n¿Reiniciar la app elevada?\n\nNota: con la app elevada, Win+Shift+S / Recortes de Windows no pueden capturar esta ventana.",
         "admin_required_exit": (
             "Disk Health Report requiere privilegios de administrador.\n\n"
             "Acepta el aviso UAC o ejecuta la aplicación con clic derecho → Ejecutar como administrador."
@@ -576,6 +579,7 @@ STRINGS = {
         "update_progress_done": "Update ready. The app will restart…",
         "update_busy": "Update in progress…",
         "update_failed": "Could not update.",
+        "update_uac_cancelled": "The administrator prompt (UAC) was cancelled. The update cannot install without it.",
         "update_pct": "{pct}%",
         "fit_width": "Fit width",
         "fit_page": "Fit page",
@@ -645,8 +649,10 @@ STRINGS = {
         "footer_expand": "Show status bar",
         "footer_collapse": "Hide status bar",
         "admin_badge_ok": "Administrator",
-        "admin_badge_no": "Not running as administrator",
+        "admin_badge_no": "Click to elevate",
         "admin_badge_tooltip": "Restart the app as administrator to format disks and use advanced tools.",
+        "admin_elevate_title": "Run as administrator",
+        "admin_elevate_body": "Some tools (format, Ventoy, etc.) need administrator rights.\n\nRestart the app elevated?\n\nNote: while elevated, Win+Shift+S / Snipping Tool cannot capture this window.",
         "admin_required_exit": (
             "Disk Health Report requires administrator privileges.\n\n"
             "Accept the UAC prompt or run the app with right-click → Run as administrator."

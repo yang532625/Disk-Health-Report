@@ -435,6 +435,7 @@ class DiskHealthApp(ctk.CTk):
             height=22,
         )
         self.admin_badge.grid(row=0, column=3, sticky="e", padx=(12, 0))
+        self.admin_badge.bind("<Button-1>", lambda _e: self._on_admin_badge_click())
         self._update_admin_badge()
 
         self._clock_job = None
@@ -1361,9 +1362,12 @@ class DiskHealthApp(ctk.CTk):
             pass
         self._set_update_now_enabled(True)
         self._set_update_status(t("update_failed", self.lang))
+        err_text = str(exc)
+        if "UAC" in err_text or "cancel" in err_text.lower():
+            err_text = t("update_uac_cancelled", self.lang)
         messagebox.showerror(
             t("update_failed", self.lang),
-            str(exc),
+            err_text,
             parent=self,
         )
         # Fallback: abrir la página de releases
@@ -3715,6 +3719,17 @@ class DiskHealthApp(ctk.CTk):
                 fg_color="#c0392b",
                 text_color="#ffffff",
             )
+
+    def _on_admin_badge_click(self):
+        """Clic en la insignia: elevar si aún no es administrador."""
+        if is_admin():
+            return
+        if messagebox.askyesno(
+            t("admin_elevate_title", self.lang),
+            t("admin_elevate_body", self.lang),
+            parent=self,
+        ):
+            restart_as_admin()
 
     def _require_admin_for_disk_ops(self) -> bool:
         if is_admin():
