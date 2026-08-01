@@ -1,12 +1,10 @@
-INSTALADOR AQUI
-===============
+﻿INSTALADOR
+==========
 
-Archivos en esta carpeta:
+Usa este archivo (doble clic):
 
-  INSTALADOR_DiskHealthReport_vXXXX_x64.exe   ← doble clic para instalar
-  DiskHealthReport_Setup_x64.exe              ← mismo instalador (nombre corto)
+  INSTALADOR_DiskHealthReport_v1.24.1_x64.exe
 
-También está en:  release\DiskHealthReport_Setup_x64.exe
-
-Actualizaciones en la nube:
+Misma copia en release\DiskHealthReport_Setup_x64.exe
+Descarga en la nube:
   https://github.com/yang532625/Disk-Health-Report/releases

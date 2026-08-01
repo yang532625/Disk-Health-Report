@@ -11,6 +11,7 @@ from i18n import format_date_long, format_datetime_short, format_status, get_att
 from report_i18n import localize_identification
 from smart_parser import (
     DiskReport,
+    _parse_command_timeout,
     format_rotation_rate,
     generar_observaciones,
     generar_recomendacion,
@@ -176,6 +177,24 @@ def generar_html(report: DiskReport, lang: str = "es") -> str:
                 if lang == "es"
                 else "No SATA cable/interface CRC errors."
             )
+        elif attr.attr_id == 188:
+            total, late, failed = _parse_command_timeout(attr.raw_value)
+            if total == 0 and late == 0 and failed == 0:
+                meaning = (
+                    "Sin timeouts de comando (0/0/0)."
+                    if lang == "es"
+                    else "No command timeouts (0/0/0)."
+                )
+            else:
+                meaning = (
+                    f"Histórico de timeouts (total/tardíos/fallidos): {total}/{late}/{failed}. "
+                    "Suele relacionarse con cable, USB o controlador; no implica fallo del disco por sí solo."
+                    if lang == "es"
+                    else (
+                        f"Timeout history (total/late/failed): {total}/{late}/{failed}. "
+                        "Often related to cable, USB, or controller; does not by itself mean the disk is failing."
+                    )
+                )
         attr_rows += f"""
         <tr style="background-color: {bg};">
             <td class="attr-cell">{attr_label}</td>

@@ -129,6 +129,24 @@ def _parse_int(value: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _parse_command_timeout(raw: str) -> tuple[int, int, int]:
+    """Desempaqueta SMART 188 (Seagate): total / tardíos / fallidos (16 bits c/u)."""
+    v = _parse_int(raw)
+    if "/" in str(raw):
+        parts = str(raw).split("/")
+        if len(parts) >= 3:
+            return _parse_int(parts[0]), _parse_int(parts[1]), _parse_int(parts[2])
+    total = v & 0xFFFF
+    late = (v >> 16) & 0xFFFF
+    failed = (v >> 32) & 0xFFFF
+    return total, late, failed
+
+
+def _format_command_timeout(raw: str) -> str:
+    total, late, failed = _parse_command_timeout(raw)
+    return f"{total}/{late}/{failed}"
+
+
 def _lba_to_tb(raw: str, sector_size: int = 512) -> Optional[float]:
     val = _parse_int(raw)
     if val <= 0:
@@ -203,7 +221,11 @@ def _evaluar_estado(attr_id: int, raw: str, es_seagate: bool, reasignados: int) 
     if attr_id == 10:
         return "Alerta" if raw_int > 0 else "OK"
     if attr_id == 188:
-        return "Alerta" if raw_int > 0 else "OK"
+        total, late, failed = _parse_command_timeout(raw)
+        if total == 0 and late == 0 and failed == 0:
+            return "OK"
+        # Histórico de interfaz/cable; no marca el disco como fallido por sí solo.
+        return "Nota"
     if attr_id == 184:
         return "Alerta" if raw_int > 0 else "OK"
 
@@ -230,6 +252,14 @@ def _meaning_for_attr(attr_id: int, raw: str, es_seagate: bool, reasignados: int
         return "Sin errores incorregibles reportados."
     if attr_id == 199 and _parse_int(raw) == 0:
         return "Sin errores de cable/interfaz SATA."
+    if attr_id == 188:
+        total, late, failed = _parse_command_timeout(raw)
+        if total == 0 and late == 0 and failed == 0:
+            return "Sin timeouts de comando (0/0/0)."
+        return (
+            f"Histórico de timeouts (total/tardíos/fallidos): {total}/{late}/{failed}. "
+            "Suele relacionarse con cable, USB o controlador; no implica fallo del disco por sí solo."
+        )
     return base
 
 
@@ -703,6 +733,8 @@ def parsear_smartctl(raw_text: str) -> DiskReport:
             if t_val > 1000:
                 t_val = t_val // 1000
             display_val = f"{t_val} °C"
+        elif attr_id == 188:
+            display_val = _format_command_timeout(raw_val)
 
         report.atributos_criticos.append(
             SmartAttribute(

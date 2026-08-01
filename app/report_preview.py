@@ -8,6 +8,8 @@ import shutil
 import tempfile
 import tkinter as tk
 import tkinter.messagebox as messagebox
+from datetime import datetime
+from tkinter import filedialog
 from typing import Callable, Optional
 
 import customtkinter as ctk
@@ -127,7 +129,12 @@ class ReportPreviewFrame(ctk.CTkFrame):
         self._fit_page_btn = ctk.CTkButton(
             tb, text=t("fit_page", self.lang), width=120, command=self._set_fit_page, **wide_kw
         )
-        self._fit_page_btn.pack(side="left")
+        self._fit_page_btn.pack(side="left", padx=(0, 8))
+
+        self._screenshot_btn = ctk.CTkButton(
+            tb, text=t("screenshot", self.lang), width=120, command=self._screenshot, **wide_kw
+        )
+        self._screenshot_btn.pack(side="left")
 
         container = ctk.CTkFrame(self, fg_color=COLOR_CANVAS, corner_radius=0)
         container.grid(row=1, column=0, sticky="nsew")
@@ -452,6 +459,61 @@ class ReportPreviewFrame(ctk.CTkFrame):
         self._render_pages()
 
     # --------------------------- Export ---------------------------
+    def _screenshot(self):
+        """Guarda una captura PNG del reporte (páginas PDF renderizadas)."""
+        try:
+            import pymupdf as fitz
+            from PIL import Image
+
+            pdf_path = self._build_preview_pdf()
+            doc = fitz.open(pdf_path)
+            zoom = 2.0
+            matrix = fitz.Matrix(zoom, zoom)
+            images = []
+            for page in doc:
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                images.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
+            doc.close()
+            if not images:
+                raise RuntimeError("empty pdf")
+
+            gap = 16
+            max_w = max(im.width for im in images)
+            total_h = sum(im.height for im in images) + gap * (len(images) - 1)
+            canvas = Image.new("RGB", (max_w, total_h), (82, 86, 89))
+            y = 0
+            for im in images:
+                x = (max_w - im.width) // 2
+                canvas.paste(im, (x, y))
+                y += im.height + gap
+
+            serial = (self.report.serial or "drive").replace(" ", "_")
+            default_name = f"screenshot_{serial}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            initial_dir = get_reports_dir()
+            os.makedirs(initial_dir, exist_ok=True)
+            path = filedialog.asksaveasfilename(
+                parent=self,
+                title=t("screenshot", self.lang),
+                initialdir=initial_dir,
+                initialfile=default_name,
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png")],
+            )
+            if not path:
+                return
+            canvas.save(path, format="PNG")
+            messagebox.showinfo(
+                t("screenshot_ok", self.lang),
+                t("screenshot_ok_body", self.lang, path=path),
+                parent=self,
+            )
+        except Exception as e:
+            messagebox.showerror(
+                t("report_error", self.lang),
+                f"{t('screenshot_error', self.lang)}\n\n{e}",
+                parent=self,
+            )
+
     def _export_final_pdf(self) -> str:
         if self._exported_pdf and os.path.isfile(self._exported_pdf):
             return self._exported_pdf
