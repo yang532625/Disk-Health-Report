@@ -157,14 +157,22 @@ def download_installer(
     url: str,
     dest_dir: str | None = None,
     progress_callback: ProgressCallback | None = None,
+    *,
+    version: str | None = None,
 ) -> str:
     """Descarga el Setup.exe. progress_callback(fraction 0..1, status_text)."""
+    import time
+
     folder = dest_dir or tempfile.gettempdir()
     os.makedirs(folder, exist_ok=True)
-    name = os.path.basename(url.split("?")[0]) or "DiskHealthReport_Setup_x64.exe"
-    if not name.lower().endswith(".exe"):
-        name = "DiskHealthReport_Setup_x64.exe"
-    dest = os.path.join(folder, name)
+    base = os.path.basename(url.split("?")[0]) or "DiskHealthReport_Setup_x64.exe"
+    if not base.lower().endswith(".exe"):
+        base = "DiskHealthReport_Setup_x64.exe"
+    stem, ext = os.path.splitext(base)
+    # Nombre único: evita Errno 13 si un Setup anterior sigue bloqueado en Temp.
+    ver_part = re.sub(r"[^\d.]", "", version or "") or time.strftime("%Y%m%d_%H%M%S")
+    dest = os.path.join(folder, f"{stem}_v{ver_part}_{os.getpid()}{ext}")
+
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     if progress_callback:
         progress_callback(0.0, "download")
@@ -185,7 +193,6 @@ def download_installer(
                 if total > 0:
                     progress_callback(min(done / total, 1.0), "download")
                 else:
-                    # sin Content-Length: avanza suave hasta ~0.7
                     progress_callback(min(0.15 + done / (80 * 1024 * 1024), 0.7), "download")
     if progress_callback:
         progress_callback(1.0, "download")
@@ -259,7 +266,11 @@ def apply_update(
             if progress_callback:
                 progress_callback(0.85 * max(0.0, min(frac, 1.0)), "download")
 
-        path = download_installer(info.download_url, progress_callback=_map_dl)
+        path = download_installer(
+            info.download_url,
+            progress_callback=_map_dl,
+            version=info.version,
+        )
         if progress_callback:
             progress_callback(0.9, "install")
     else:
