@@ -464,29 +464,77 @@ def exportar_pdf(html: str, output_path: str) -> bool:
     return not result.err
 
 
+def _safe_filename_part(text: str, fallback: str = "disk") -> str:
+    cleaned = re.sub(r"[^\w\-]+", "_", str(text or "").strip(), flags=re.UNICODE)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("._")
+    return cleaned or fallback
+
+
+def _infer_brand(report: DiskReport) -> str:
+    """Marca corta para el nombre del PDF (Seagate, WD, Samsung, …)."""
+    modelo = (report.modelo or "").strip()
+    ml = modelo.lower()
+    if report.es_seagate or modelo.upper().startswith("ST"):
+        return "Seagate"
+    if "western digital" in ml or ml.startswith("wd") or "wdc" in ml.split():
+        return "WD"
+    if "samsung" in ml:
+        return "Samsung"
+    if "crucial" in ml:
+        return "Crucial"
+    if "kingston" in ml:
+        return "Kingston"
+    if "toshiba" in ml:
+        return "Toshiba"
+    if "hitachi" in ml or "hgst" in ml:
+        return "HGST"
+    if "intel" in ml:
+        return "Intel"
+    if "micron" in ml:
+        return "Micron"
+    if "sandisk" in ml:
+        return "SanDisk"
+    if "sk hynix" in ml or "hynix" in ml:
+        return "SKHynix"
+    if "apple" in ml:
+        return "Apple"
+    if "corsair" in ml:
+        return "Corsair"
+    if "adata" in ml:
+        return "ADATA"
+    first = re.split(r"[\s/\-_]+", modelo, maxsplit=1)[0] if modelo else ""
+    if first and first.lower() not in ("desconocido", "unknown", ""):
+        return first
+    return "Drive"
+
+
+def build_report_pdf_path(report: DiskReport, output_dir: str, lang: str = "es") -> str:
+    """
+    Ruta del PDF: {marca}_{SN}.pdf
+    La fecha va en la carpeta del día (no en el nombre).
+    """
+    del lang  # reserved for future localization of fallbacks
+    brand = _safe_filename_part(_infer_brand(report), "Drive")
+    serial = _safe_filename_part(report.serial, "NOSN")
+    base_name = f"{brand}_{serial}"
+    return os.path.join(output_dir, f"{base_name}.pdf")
+
+
 def build_report_paths(report: DiskReport, output_dir: str, lang: str = "es") -> tuple[str, str]:
-    """Genera rutas de salida PDF/HTML sin escribir archivos."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    serial_safe = re.sub(r"[^\w\-]", "_", report.serial) if report.serial else "disk"
-    prefix = t("report_filename_prefix", lang)
-    base_name = f"{prefix}_{serial_safe}_{timestamp}"
-    html_path = os.path.join(output_dir, f"{base_name}.html")
-    pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
+    """Compat: (pdf_path, html_path). El HTML ya no se escribe al exportar."""
+    pdf_path = build_report_pdf_path(report, output_dir, lang)
+    html_path = os.path.splitext(pdf_path)[0] + ".html"
     return pdf_path, html_path
 
 
-def generar_reporte(report: DiskReport, output_dir: str = ".", lang: str = "es") -> tuple[str, str]:
+def generar_reporte(report: DiskReport, output_dir: str = ".", lang: str = "es") -> str:
     """
-    Genera HTML y PDF del reporte.
-    Retorna (ruta_pdf, ruta_html).
+    Genera solo el PDF del reporte (HTML solo en memoria).
+    Retorna la ruta del PDF.
     """
     html = generar_html(report, lang)
-    pdf_path, html_path = build_report_paths(report, output_dir, lang)
-
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
+    pdf_path = build_report_pdf_path(report, output_dir, lang)
+    os.makedirs(output_dir, exist_ok=True)
     if not exportar_pdf(html, pdf_path):
         raise RuntimeError(t("pdf_error", lang))
-
-    return pdf_path, html_path
+    return pdf_path

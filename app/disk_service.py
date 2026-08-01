@@ -88,6 +88,17 @@ def get_reports_dir() -> str:
     return default
 
 
+def resolve_report_day_dir(base: str | None = None) -> str:
+    """Carpeta de reportes del día: {reports_dir}/YYYY-MM-DD/."""
+    from datetime import datetime
+
+    root = base or get_reports_dir()
+    day = datetime.now().strftime("%Y-%m-%d")
+    path = os.path.join(root, day)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def set_reports_dir(path: str) -> str:
     """Valida/crea la carpeta y la guarda en settings. Devuelve la ruta efectiva."""
     os.makedirs(path, exist_ok=True)

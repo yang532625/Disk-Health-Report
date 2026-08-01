@@ -12,7 +12,7 @@ for _p in (_APP, _ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from disk_service import get_app_dir, get_reports_dir
+from disk_service import get_app_dir, get_reports_dir, resolve_report_day_dir
 from report_builder import generar_reporte
 from smart_parser import parsear_smartctl
 
@@ -31,17 +31,16 @@ def procesar_volcado(raw_text: str, lang: str = "es") -> None:
 
     print("[+] Processing / Procesando...")
     report = parsear_smartctl(raw_text)
-    output_dir = get_reports_dir()
+    output_dir = resolve_report_day_dir(get_reports_dir())
 
     try:
-        pdf_path, html_path = generar_reporte(report, output_dir, lang)
+        pdf_path = generar_reporte(report, output_dir, lang)
     except RuntimeError as e:
         print(f"[X] {e}")
         sys.exit(1)
 
     print(f"\n[OK] Report generated / Reporte generado!")
     print(f"      PDF:  {pdf_path}")
-    print(f"      HTML: {html_path}")
 
     try:
         os.startfile(pdf_path)

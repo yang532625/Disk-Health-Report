@@ -14,9 +14,9 @@ from typing import Callable, Optional
 
 import customtkinter as ctk
 
-from disk_service import get_reports_dir, load_settings, save_settings
+from disk_service import get_reports_dir, load_settings, resolve_report_day_dir, save_settings
 from i18n import t
-from report_builder import build_report_paths, exportar_pdf, generar_html
+from report_builder import build_report_pdf_path, exportar_pdf, generar_html
 from share_utils import copy_to_clipboard, open_file_in_explorer, whatsapp_share_summary
 from smart_parser import DiskReport
 from ui_theme import ui_font
@@ -517,11 +517,9 @@ class ReportPreviewFrame(ctk.CTkFrame):
     def _export_final_pdf(self) -> str:
         if self._exported_pdf and os.path.isfile(self._exported_pdf):
             return self._exported_pdf
-        output_dir = get_reports_dir()
-        pdf_path, html_path = build_report_paths(self.report, output_dir, self.lang)
+        output_dir = resolve_report_day_dir(get_reports_dir())
+        pdf_path = build_report_pdf_path(self.report, output_dir, self.lang)
         shutil.copy2(self._build_preview_pdf(), pdf_path)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(self._html)
         self._exported_pdf = pdf_path
         return pdf_path
 
