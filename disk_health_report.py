@@ -94,8 +94,9 @@ def main():
         from runtime_bootstrap import ensure_runtime_smartctl
         ensure_runtime_smartctl()
 
-    # No forzar admin al inicio: las ventanas elevadas bloquean Win+Shift+S / Recortes.
-    # Formateo, Ventoy, etc. piden elevación solo cuando hace falta.
+    if sys.platform == "win32":
+        from disk_service import ensure_elevated
+        ensure_elevated()
 
     from app_logging import install_crash_handler
     install_crash_handler()

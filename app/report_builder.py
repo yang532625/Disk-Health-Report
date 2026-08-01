@@ -520,10 +520,39 @@ def build_report_pdf_path(report: DiskReport, output_dir: str, lang: str = "es")
     return os.path.join(output_dir, f"{base_name}.pdf")
 
 
-def build_screenshot_path(report: DiskReport, output_dir: str, lang: str = "es") -> str:
-    """Misma estructura que el PDF: {marca}_{SN}.png en la carpeta del día."""
-    pdf = build_report_pdf_path(report, output_dir, lang)
-    return os.path.splitext(pdf)[0] + ".png"
+def build_screenshot_path(
+    report: DiskReport,
+    output_dir: str,
+    lang: str = "es",
+    *,
+    page: int | None = None,
+    page_count: int = 1,
+) -> str:
+    """
+    Misma estructura que el PDF en la carpeta del día.
+    1 página: {marca}_{SN}.png
+    Varias: {marca}_{SN}_p1.png, {marca}_{SN}_p2.png, …
+    """
+    base = os.path.splitext(build_report_pdf_path(report, output_dir, lang))[0]
+    if page_count > 1 and page is not None:
+        return f"{base}_p{page}.png"
+    return f"{base}.png"
+
+
+def build_screenshot_paths(
+    report: DiskReport,
+    output_dir: str,
+    page_count: int,
+    lang: str = "es",
+) -> list[str]:
+    """Una ruta PNG por página del PDF."""
+    n = max(1, int(page_count))
+    if n == 1:
+        return [build_screenshot_path(report, output_dir, lang, page=1, page_count=1)]
+    return [
+        build_screenshot_path(report, output_dir, lang, page=i, page_count=n)
+        for i in range(1, n + 1)
+    ]
 
 
 def build_report_paths(report: DiskReport, output_dir: str, lang: str = "es") -> tuple[str, str]:

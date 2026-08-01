@@ -14,7 +14,12 @@ import customtkinter as ctk
 
 from disk_service import get_reports_dir, load_settings, resolve_report_day_dir, save_settings
 from i18n import t
-from report_builder import build_report_pdf_path, build_screenshot_path, exportar_pdf, generar_html
+from report_builder import (
+    build_report_pdf_path,
+    build_screenshot_paths,
+    exportar_pdf,
+    generar_html,
+)
 from share_utils import copy_to_clipboard, open_file_in_explorer, whatsapp_share_summary
 from smart_parser import DiskReport
 from ui_theme import ui_font
@@ -458,7 +463,7 @@ class ReportPreviewFrame(ctk.CTkFrame):
 
     # --------------------------- Export ---------------------------
     def _screenshot(self):
-        """Guarda PNG del reporte en la carpeta del día (Marca_SN.png)."""
+        """Guarda un PNG por página del PDF en la carpeta del día."""
         try:
             import pymupdf as fitz
             from PIL import Image
@@ -475,24 +480,24 @@ class ReportPreviewFrame(ctk.CTkFrame):
             if not images:
                 raise RuntimeError("empty pdf")
 
-            gap = 16
-            max_w = max(im.width for im in images)
-            total_h = sum(im.height for im in images) + gap * (len(images) - 1)
-            canvas = Image.new("RGB", (max_w, total_h), (82, 86, 89))
-            y = 0
-            for im in images:
-                x = (max_w - im.width) // 2
-                canvas.paste(im, (x, y))
-                y += im.height + gap
-
             output_dir = resolve_report_day_dir(get_reports_dir())
-            path = build_screenshot_path(self.report, output_dir, self.lang)
-            canvas.save(path, format="PNG")
-            messagebox.showinfo(
-                t("screenshot_ok", self.lang),
-                t("screenshot_ok_body", self.lang, path=path),
-                parent=self,
+            paths = build_screenshot_paths(
+                self.report, output_dir, len(images), self.lang
             )
+            for im, path in zip(images, paths):
+                im.save(path, format="PNG")
+
+            if len(paths) == 1:
+                body = t("screenshot_ok_body", self.lang, path=paths[0])
+            else:
+                listed = "\n".join(paths)
+                body = t(
+                    "screenshot_ok_body_multi",
+                    self.lang,
+                    count=len(paths),
+                    paths=listed,
+                )
+            messagebox.showinfo(t("screenshot_ok", self.lang), body, parent=self)
         except Exception as e:
             messagebox.showerror(
                 t("report_error", self.lang),
