@@ -1,0 +1,10 @@
+smartmontools - GNU General Public License (GPL)
+
+This application bundles smartmontools (smartctl) which is distributed
+under the GNU General Public License version 2 or later.
+
+Source code and license: https://www.smartmontools.org/
+Project homepage: https://sourceforge.net/projects/smartmontools/
+
+Disk Health Report is a separate application that invokes smartctl
+to read S.M.A.R.T. drive data and generate PDF reports.

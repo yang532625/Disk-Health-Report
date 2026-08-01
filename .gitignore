@@ -1,0 +1,32 @@
+build/
+release/*.exe
+installer/*.exe
+__pycache__/
+**/__pycache__/
+*.pyc
+.pyinstaller/
+
+packaging/assets/smartmontools/
+packaging/inno/version.iss.inc
+
+reporte_tecnico_*
+technical_report_*
+/*.pdf
+/*.html
+
+# Stale leftovers
+/*.exe
+debug-*.log
+.cursor/
+
+# Upstream vendor dumps (use packaging/assets instead)
+/Ventoy/
+/gparted/
+/windows defender/
+
+# Large bundled binaries (keep locally; distribute via GitHub Releases)
+packaging/assets/ventoy/ventoy/*.xz
+packaging/assets/ventoy/boot/
+packaging/assets/rufus/rufus.exe
+packaging/assets/defender_remover/PowerRun.exe
+packaging/assets/mas/MAS_AIO.cmd

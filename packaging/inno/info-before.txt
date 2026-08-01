@@ -1,0 +1,27 @@
+Disk Health Report — Setup Information
+======================================
+
+English
+-------
+This installer places Disk Health Report in Program Files with:
+  • Start Menu / optional Desktop shortcuts
+  • Add or Remove Programs uninstaller
+  • In-place upgrades (install a newer Setup over the old one — no uninstall needed)
+
+S.M.A.R.T. tools and libraries are embedded. Administrator rights are required
+to read drive health data.
+
+Reports are saved to:  Documents\DiskHealthReport\
+
+
+Español
+-------
+Este instalador coloca Disk Health Report en Archivos de programa con:
+  • Accesos en el menú Inicio / escritorio (opcional)
+  • Desinstalador en Aplicaciones y características
+  • Actualizaciones in-place (instale un Setup más nuevo encima — sin desinstalar)
+
+Las herramientas S.M.A.R.T. van incluidas. Se requieren permisos de administrador
+para leer el estado de los discos.
+
+Reportes en:  Documentos\DiskHealthReport\
