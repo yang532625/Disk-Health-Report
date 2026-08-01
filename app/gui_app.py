@@ -1064,9 +1064,27 @@ class DiskHealthApp(ctk.CTk):
             text_color=COLOR_TEXT_MUTED,
             anchor="w",
         )
-        self._update_status_label.pack(anchor="w", pady=(6, 10), fill="x")
-        ctk.CTkButton(
+        self._update_status_label.pack(anchor="w", pady=(6, 8), fill="x")
+
+        self._update_progress = ctk.CTkProgressBar(
             upd_inner,
+            height=12,
+            progress_color=COLOR_APPLE_BLUE,
+            fg_color=COLOR_APPLE_GRAY_BG,
+        )
+        self._update_progress.set(0)
+        self._update_pct_label = ctk.CTkLabel(
+            upd_inner,
+            text="",
+            font=ui_font(size=11),
+            text_color=COLOR_TEXT_MUTED,
+            anchor="w",
+        )
+
+        btn_row = ctk.CTkFrame(upd_inner, fg_color="transparent")
+        btn_row.pack(anchor="w", fill="x")
+        self._check_updates_btn = ctk.CTkButton(
+            btn_row,
             text=t("check_updates", self.lang),
             command=lambda: self._check_for_updates(manual=True),
             width=200,
@@ -1075,7 +1093,35 @@ class DiskHealthApp(ctk.CTk):
             fg_color=COLOR_APPLE_BLUE,
             hover_color=COLOR_APPLE_BLUE_HOVER,
             text_color="#ffffff",
-        ).pack(anchor="w")
+        )
+        self._check_updates_btn.pack(side="left")
+        self._update_now_btn = ctk.CTkButton(
+            btn_row,
+            text=t("update_now", self.lang),
+            command=self._on_update_now_clicked,
+            width=140,
+            height=34,
+            corner_radius=10,
+            fg_color="#0d9488",
+            hover_color="#0f766e",
+            text_color="#ffffff",
+            state="disabled",
+        )
+        self._update_now_btn.pack(side="left", padx=(10, 0))
+        if getattr(self, "_pending_update", None) is None:
+            self._pending_update = None
+        self._update_apply_busy = getattr(self, "_update_apply_busy", False)
+        pending = self._pending_update
+        if pending is not None and not self._update_apply_busy:
+            self._update_now_btn.configure(state="normal")
+            self._update_status_label.configure(
+                text=t(
+                    "update_available_status",
+                    self.lang,
+                    latest=pending.version,
+                    current=__version__,
+                )
+            )
 
         about = ctk.CTkFrame(panel, fg_color=COLOR_CARD, corner_radius=12,
                              border_width=1, border_color="#c5d4e4")
@@ -1141,33 +1187,37 @@ class DiskHealthApp(ctk.CTk):
 
     def _on_update_check_done(self, info, manual: bool):
         self._update_check_busy = False
+        if getattr(self, "_update_apply_busy", False):
+            return
         if info is None:
+            self._pending_update = None
+            self._set_update_now_enabled(False)
             if manual:
                 messagebox.showinfo(
                     t("update_up_to_date_title", self.lang),
                     t("update_up_to_date_body", self.lang, current=__version__),
                     parent=self,
                 )
-                if getattr(self, "_update_status_label", None) is not None:
-                    try:
-                        self._update_status_label.configure(
-                            text=t("update_up_to_date_body", self.lang, current=__version__)
-                        )
-                    except Exception:
-                        pass
+            self._set_update_status(
+                t("update_up_to_date_body", self.lang, current=__version__)
+                if manual
+                else f"v{__version__}"
+            )
             return
-        source = (
-            t("update_source_github", self.lang)
-            if info.source == "github"
-            else t("update_source_local", self.lang)
+
+        self._pending_update = info
+        self._set_update_now_enabled(True)
+        self._set_update_status(
+            t(
+                "update_available_status",
+                self.lang,
+                latest=info.version,
+                current=__version__,
+            )
         )
-        if getattr(self, "_update_status_label", None) is not None:
-            try:
-                self._update_status_label.configure(
-                    text=f"v{__version__} → v{info.version} ({source})"
-                )
-            except Exception:
-                pass
+        # En búsqueda manual, preguntar; al inicio solo habilitar el botón Actualizar.
+        if not manual:
+            return
         ok = messagebox.askyesno(
             t("update_available_title", self.lang),
             t(
@@ -1175,49 +1225,152 @@ class DiskHealthApp(ctk.CTk):
                 self.lang,
                 latest=info.version,
                 current=__version__,
-                source=source,
+                source=(
+                    t("update_source_github", self.lang)
+                    if info.source == "github"
+                    else t("update_source_local", self.lang)
+                ),
             ),
             parent=self,
         )
-        if not ok:
+        if ok:
+            self._apply_update(info)
+
+    def _on_update_now_clicked(self):
+        info = getattr(self, "_pending_update", None)
+        if not info:
+            self._check_for_updates(manual=True)
             return
         self._apply_update(info)
+
+    def _set_update_now_enabled(self, enabled: bool):
+        btn = getattr(self, "_update_now_btn", None)
+        if btn is None:
+            return
+        try:
+            btn.configure(state="normal" if enabled else "disabled")
+        except Exception:
+            pass
+
+    def _set_update_status(self, text: str):
+        label = getattr(self, "_update_status_label", None)
+        if label is None:
+            return
+        try:
+            label.configure(text=text)
+        except Exception:
+            pass
+
+    def _show_update_progress_ui(self, show: bool):
+        bar = getattr(self, "_update_progress", None)
+        pct = getattr(self, "_update_pct_label", None)
+        btn_row = getattr(self, "_check_updates_btn", None)
+        btn_row = btn_row.master if btn_row is not None else None
+        if bar is None or pct is None:
+            return
+        try:
+            if show:
+                if btn_row is not None:
+                    bar.pack(anchor="w", fill="x", pady=(0, 4), before=btn_row)
+                    pct.pack(anchor="w", pady=(0, 8), before=btn_row)
+                else:
+                    bar.pack(anchor="w", fill="x", pady=(0, 4))
+                    pct.pack(anchor="w", pady=(0, 8))
+            else:
+                bar.pack_forget()
+                pct.pack_forget()
+        except Exception:
+            pass
+
+    def _set_update_progress(self, fraction: float, phase: str = "download"):
+        frac = max(0.0, min(float(fraction), 1.0))
+        pct = int(round(clamp_pct(frac * 100)))
+        bar = getattr(self, "_update_progress", None)
+        pct_label = getattr(self, "_update_pct_label", None)
+        if bar is not None and pct_label is not None:
+            self._show_update_progress_ui(True)
+            try:
+                bar.set(frac)
+            except Exception:
+                pass
+            try:
+                pct_label.configure(text=t("update_pct", self.lang, pct=pct))
+            except Exception:
+                pass
+        # También la barra del pie (visible aunque no esté en Ajustes)
+        try:
+            self._set_progress_pct(float(pct), update_status=False)
+        except Exception:
+            pass
+        if phase == "download":
+            msg = t("update_downloading", self.lang, pct=pct)
+        elif phase == "done":
+            msg = t("update_progress_done", self.lang)
+        else:
+            msg = t("update_installing", self.lang, pct=pct)
+        self._set_update_status(msg)
+        try:
+            self.status_label.configure(text=msg)
+            self._update_footer_handle_summary()
+        except Exception:
+            pass
 
     def _apply_update(self, info):
         import app_updater
 
+        if getattr(self, "_update_apply_busy", False):
+            self._set_update_status(t("update_busy", self.lang))
+            return
+        self._update_apply_busy = True
+        self._set_update_now_enabled(False)
         try:
-            if info.local_path and os.path.isfile(info.local_path):
-                app_updater.launch_installer(info.local_path)
-                return
-            if info.download_url and info.download_url.endswith(".exe"):
-                if getattr(self, "_update_status_label", None) is not None:
-                    try:
-                        self._update_status_label.configure(text=t("update_downloading", self.lang))
-                    except Exception:
-                        pass
+            self._check_updates_btn.configure(state="disabled")
+        except Exception:
+            pass
+        self._set_update_progress(0.0, "download")
 
-                def dl():
-                    try:
-                        path = app_updater.download_installer(info.download_url)
-                        self.after(0, lambda: app_updater.launch_installer(path))
-                    except Exception as exc:
-                        self.after(
-                            0,
-                            lambda: messagebox.showerror(
-                                t("update_check_failed_title", self.lang),
-                                str(exc),
-                                parent=self,
-                            ),
-                        )
+        def worker():
+            try:
+                def on_progress(frac: float, phase: str):
+                    self.after(0, lambda f=frac, p=phase: self._set_update_progress(f, p))
 
-                threading.Thread(target=dl, daemon=True).start()
-                return
-            import webbrowser
+                app_updater.apply_update(info, progress_callback=on_progress, silent=True)
+                self.after(0, self._on_update_apply_done)
+            except Exception as exc:
+                self.after(0, lambda: self._on_update_apply_failed(exc, info))
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_apply_done(self):
+        self._set_update_progress(1.0, "done")
+        # El instalador silencioso cerrará y reiniciará la app.
+        try:
+            self.after(800, self.destroy)
+        except Exception:
+            pass
+
+    def _on_update_apply_failed(self, exc, info):
+        import app_updater
+        import webbrowser
+
+        self._update_apply_busy = False
+        self._show_update_progress_ui(False)
+        try:
+            self._check_updates_btn.configure(state="normal")
+        except Exception:
+            pass
+        self._set_update_now_enabled(True)
+        self._set_update_status(t("update_failed", self.lang))
+        messagebox.showerror(
+            t("update_failed", self.lang),
+            str(exc),
+            parent=self,
+        )
+        # Fallback: abrir la página de releases
+        try:
             webbrowser.open(info.download_url or app_updater.GITHUB_RELEASES_URL)
-        except Exception as exc:
-            messagebox.showerror(t("update_check_failed_title", self.lang), str(exc), parent=self)
+        except Exception:
+            pass
 
     def _collect_drive_letters(self) -> list[str]:
         letters: set[str] = set()

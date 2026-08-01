@@ -95,7 +95,10 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppNameShort}"; ValueType: s
 Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppNameShort}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
 
 [Run]
+; Wizard installs: optional launch checkbox on finish page
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec
+; Silent in-app updates: relaunch automatically after upgrade
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifnotsilent shellexec
 
 [UninstallDelete]
 ; Runtime extracts (smartctl cache etc.) — keep user reports in Documents

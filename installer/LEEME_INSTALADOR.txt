@@ -3,7 +3,7 @@
 
 Usa este archivo (doble clic):
 
-  INSTALADOR_DiskHealthReport_v1.24.1_x64.exe
+  INSTALADOR_DiskHealthReport_v1.24.2_x64.exe
 
 Misma copia en release\DiskHealthReport_Setup_x64.exe
 Descarga en la nube:

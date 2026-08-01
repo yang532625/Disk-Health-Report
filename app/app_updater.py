@@ -6,11 +6,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from version import __version__
 
@@ -26,6 +28,8 @@ _SETUP_NAME_RE = re.compile(
     r"DiskHealthReport[_-]?(?:Setup|Installer)?[_-]?v?(\d+\.\d+\.\d+)",
     re.IGNORECASE,
 )
+
+ProgressCallback = Callable[[float, str], None]
 
 
 @dataclass
@@ -149,8 +153,12 @@ def check_for_updates(
     return remote or local
 
 
-def download_installer(url: str, dest_dir: str | None = None) -> str:
-    """Descarga el Setup.exe a dest_dir (o TEMP) y devuelve la ruta."""
+def download_installer(
+    url: str,
+    dest_dir: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> str:
+    """Descarga el Setup.exe. progress_callback(fraction 0..1, status_text)."""
     folder = dest_dir or tempfile.gettempdir()
     os.makedirs(folder, exist_ok=True)
     name = os.path.basename(url.split("?")[0]) or "DiskHealthReport_Setup_x64.exe"
@@ -158,14 +166,92 @@ def download_installer(url: str, dest_dir: str | None = None) -> str:
         name = "DiskHealthReport_Setup_x64.exe"
     dest = os.path.join(folder, name)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as out:
+    if progress_callback:
+        progress_callback(0.0, "download")
+    with urllib.request.urlopen(req, timeout=180) as resp, open(dest, "wb") as out:
+        total = 0
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        done = 0
         while True:
             chunk = resp.read(1024 * 256)
             if not chunk:
                 break
             out.write(chunk)
+            done += len(chunk)
+            if progress_callback:
+                if total > 0:
+                    progress_callback(min(done / total, 1.0), "download")
+                else:
+                    # sin Content-Length: avanza suave hasta ~0.7
+                    progress_callback(min(0.15 + done / (80 * 1024 * 1024), 0.7), "download")
+    if progress_callback:
+        progress_callback(1.0, "download")
     return dest
 
 
-def launch_installer(path: str) -> None:
-    os.startfile(path)  # noqa: S606 — Windows installer launch
+def launch_installer(path: str, *, silent: bool = False) -> None:
+    """Abre el Setup. silent=True: actualización en segundo plano (sin asistente)."""
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    if not silent:
+        os.startfile(path)  # noqa: S606 — Windows installer launch
+        return
+
+    # /VERYSILENT: sin wizard; cierra la app y actualiza sobre la instalación existente.
+    args = [
+        path,
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/CLOSEAPPLICATIONS",
+        "/FORCECLOSEAPPLICATIONS",
+    ]
+    creation = 0
+    if sys.platform == "win32":
+        creation = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        creation |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    subprocess.Popen(  # noqa: S603 — trusted local Setup path
+        args,
+        cwd=os.path.dirname(path) or None,
+        close_fds=True,
+        creationflags=creation,
+    )
+
+
+def apply_update(
+    info: UpdateInfo,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    silent: bool = True,
+) -> str:
+    """
+    Descarga (si hace falta) y lanza el instalador.
+    Progreso sugerido: descarga 0..0.85, preparar 0.85..0.95, lanzar 1.0.
+    Devuelve la ruta del Setup usado.
+    """
+    path = ""
+    if info.local_path and os.path.isfile(info.local_path):
+        path = info.local_path
+        if progress_callback:
+            progress_callback(0.9, "install")
+    elif info.download_url and ".exe" in info.download_url.lower():
+        def _map_dl(frac: float, _phase: str) -> None:
+            if progress_callback:
+                progress_callback(0.85 * max(0.0, min(frac, 1.0)), "download")
+
+        path = download_installer(info.download_url, progress_callback=_map_dl)
+        if progress_callback:
+            progress_callback(0.9, "install")
+    else:
+        raise RuntimeError("No installer URL or local path")
+
+    if progress_callback:
+        progress_callback(0.97, "install")
+    launch_installer(path, silent=silent)
+    if progress_callback:
+        progress_callback(1.0, "done")
+    return path
