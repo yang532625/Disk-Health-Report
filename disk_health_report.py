@@ -90,7 +90,8 @@ def main():
         ensure_runtime_smartctl()
 
     if sys.platform == "win32":
-        from disk_service import ensure_elevated
+        from disk_service import acquire_app_mutex, ensure_elevated
+        acquire_app_mutex()
         ensure_elevated()
 
     from app_logging import install_crash_handler

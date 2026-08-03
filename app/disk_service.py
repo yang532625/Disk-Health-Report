@@ -169,6 +169,49 @@ def ensure_elevated() -> None:
     sys.exit(0)
 
 
+_APP_MUTEX_HANDLE = None
+
+
+def acquire_app_mutex() -> None:
+    """
+    Crea el mutex que Inno Setup espera (AppMutex=DiskHealthReportRunning)
+    para cerrar/actualizar la app instalada en la misma carpeta.
+    """
+    global _APP_MUTEX_HANDLE
+    if sys.platform != "win32" or _APP_MUTEX_HANDLE is not None:
+        return
+    try:
+        import ctypes
+
+        _APP_MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(
+            None, False, "DiskHealthReportRunning"
+        )
+    except Exception:
+        _APP_MUTEX_HANDLE = None
+
+
+def get_install_dir() -> str:
+    """Carpeta de instalación real (para actualizaciones in-place)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"Software\Disk Health\DiskHealthReport",
+        ) as key:
+            path, _ = winreg.QueryValueEx(key, "InstallPath")
+            if path and os.path.isdir(path):
+                return path
+    except OSError:
+        pass
+    return os.path.join(
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        "DiskHealthReport",
+    )
+
+
 def _hidden_subprocess_kwargs() -> dict:
     """Evita ventanas CMD al lanzar smartctl u otros procesos en Windows."""
     if sys.platform != "win32":

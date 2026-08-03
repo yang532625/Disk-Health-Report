@@ -199,8 +199,8 @@ def download_installer(
     return dest
 
 
-def launch_installer(path: str, *, silent: bool = False) -> None:
-    """Abre el Setup. silent=True: actualización elevada en segundo plano (sin asistente)."""
+def launch_installer(path: str, *, silent: bool = False, install_dir: str | None = None) -> None:
+    """Abre el Setup. silent=True: actualización elevada que sobrescribe la instalación."""
     path = os.path.abspath(path)
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
@@ -208,11 +208,14 @@ def launch_installer(path: str, *, silent: bool = False) -> None:
         os.startfile(path)  # noqa: S606 — Windows installer launch
         return
 
-    # PrivilegesRequired=admin: hace falta UAC. Popen sin elevación fallaba en silencio
-    # y la app se quedaba en la versión anterior.
+    # PrivilegesRequired=admin + misma carpeta (/DIR) = sobrescribe, no instala en paralelo.
+    from disk_service import get_install_dir
+
+    target = install_dir or get_install_dir()
     params = (
         "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
-        "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS"
+        "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS "
+        f'/DIR="{target}"'
     )
     if sys.platform == "win32":
         import ctypes

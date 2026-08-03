@@ -15,7 +15,7 @@ AppSupportURL={#MyAppSupportURL}
 AppUpdatesURL={#MyAppUpdatesURL}
 DefaultDirName={autopf}\{#MyAppDirName}
 DefaultGroupName={#MyAppGroupName}
-DisableProgramGroupPage=no
+DisableProgramGroupPage=yes
 AllowNoIcons=yes
 OutputDir={#MySetupOutputDir}
 OutputBaseFilename={#MySetupBaseName}
@@ -33,7 +33,7 @@ PrivilegesRequired={#MyPrivileges}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion={#MyMinWindows}
-; --- In-place upgrades (same AppId) ---
+; --- In-place upgrades (same AppId → sobrescribe, no instalación paralela) ---
 UsePreviousAppDir=yes
 UsePreviousGroup=yes
 UsePreviousTasks=yes
@@ -42,9 +42,11 @@ CloseApplications=force
 RestartApplications=no
 AppMutex={#MyAppMutex}
 DisableWelcomePage=no
-DisableDirPage=no
+; No dejar elegir otra carpeta: siempre la instalación existente / Program Files
+DisableDirPage=yes
 DisableFinishedPage=no
-ShowLanguageDialog=yes
+ShowLanguageDialog=auto
+DirExistsWarning=no
 ; Version metadata (Add/Remove Programs + file properties)
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -126,14 +128,25 @@ begin
     Exit;
   if RegQueryStringValue(HKCU, UninstallRegKey, 'DisplayVersion', Result) then
     Exit;
+  if RegQueryStringValue(HKLM, 'Software\{#MyAppPublisher}\{#MyAppNameShort}', 'Version', Result) then
+    Exit;
 end;
 
 function InitializeSetup(): Boolean;
+var
+  ExistingExe: String;
 begin
   IsUpdateInstall := False;
   PreviousVersion := GetInstalledVersion();
   if PreviousVersion <> '' then
-    IsUpdateInstall := True;
+    IsUpdateInstall := True
+  else
+  begin
+    { Sin clave de desinstalación: si el EXE ya está en Program Files, es actualización. }
+    ExistingExe := ExpandConstant('{autopf}\{#MyAppDirName}\{#MyAppExeName}');
+    if FileExists(ExistingExe) then
+      IsUpdateInstall := True;
+  end;
   Result := True;
 end;
 
