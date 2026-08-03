@@ -175,16 +175,6 @@ class ReportPreviewFrame(ctk.CTkFrame):
         inner = ctk.CTkFrame(self._footer, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=16, pady=12)
 
-        settings = load_settings()
-        self._open_after_var = ctk.BooleanVar(value=settings.get("open_after_export", True))
-        ctk.CTkCheckBox(
-            inner,
-            text=t("open_after_export", self.lang),
-            variable=self._open_after_var,
-            font=ui_font(12),
-            text_color=COLOR_TEXT_MUTED,
-        ).pack(anchor="w", pady=(0, 8))
-
         ctk.CTkButton(
             inner,
             text=t("export_pdf", self.lang),
@@ -518,13 +508,8 @@ class ReportPreviewFrame(ctk.CTkFrame):
         try:
             pdf_path = self._export_final_pdf()
             settings = load_settings()
-            settings["open_after_export"] = self._open_after_var.get()
+            settings["open_after_export"] = False
             save_settings(settings)
-            if self._open_after_var.get():
-                try:
-                    os.startfile(pdf_path)
-                except OSError:
-                    pass
             messagebox.showinfo(
                 t("report_success", self.lang),
                 f"{t('report_success', self.lang)}\n\n{pdf_path}",

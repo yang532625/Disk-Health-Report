@@ -470,6 +470,22 @@ def _safe_filename_part(text: str, fallback: str = "disk") -> str:
     return cleaned or fallback
 
 
+def _safe_filename_token(text: str, fallback: str = "disk") -> str:
+    """Token para nombres con separador ' - ' (sin espacios internos)."""
+    cleaned = re.sub(r"[^\w.\-]+", "", str(text or "").strip(), flags=re.UNICODE)
+    cleaned = cleaned.strip(".-")
+    return cleaned or fallback
+
+
+def _capacity_for_filename(report: DiskReport) -> str:
+    """Almacenamiento corto: 500GB, 1TB, …"""
+    for source in (report.capacidad_corta, report.capacidad):
+        m = re.search(r"([\d.]+)\s*(TB|GB)", str(source or ""), re.I)
+        if m:
+            return f"{m.group(1)}{m.group(2).upper()}"
+    return "NA"
+
+
 def _infer_brand(report: DiskReport) -> str:
     """Marca corta para el nombre del PDF (Seagate, WD, Samsung, …)."""
     modelo = (report.modelo or "").strip()
@@ -510,13 +526,14 @@ def _infer_brand(report: DiskReport) -> str:
 
 def build_report_pdf_path(report: DiskReport, output_dir: str, lang: str = "es") -> str:
     """
-    Ruta del PDF: {marca}_{SN}.pdf
+    Ruta del PDF: {marca} - {almacenamiento} - {SN}.pdf
     La fecha va en la carpeta del día (no en el nombre).
     """
     del lang  # reserved for future localization of fallbacks
-    brand = _safe_filename_part(_infer_brand(report), "Drive")
-    serial = _safe_filename_part(report.serial, "NOSN")
-    base_name = f"{brand}_{serial}"
+    brand = _safe_filename_token(_infer_brand(report), "Drive")
+    capacity = _safe_filename_token(_capacity_for_filename(report), "NA")
+    serial = _safe_filename_token(report.serial, "NOSN")
+    base_name = f"{brand} - {capacity} - {serial}"
     return os.path.join(output_dir, f"{base_name}.pdf")
 
 

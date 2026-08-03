@@ -42,11 +42,6 @@ def procesar_volcado(raw_text: str, lang: str = "es") -> None:
     print(f"\n[OK] Report generated / Reporte generado!")
     print(f"      PDF:  {pdf_path}")
 
-    try:
-        os.startfile(pdf_path)
-    except OSError:
-        pass
-
 
 def main_cli_sample(sample_path: str, lang: str = "es"):
     candidates = [sample_path]
