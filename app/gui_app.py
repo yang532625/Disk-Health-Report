@@ -378,6 +378,7 @@ class DiskHealthApp(ctk.CTk):
             border_color="#ffffff",
         )
         self.tools_btn.grid(row=0, column=2, padx=(0, 10))
+        self._tools_btn = self.tools_btn
 
         self.refresh_btn = ctk.CTkButton(
             controls,
@@ -3759,7 +3760,15 @@ class DiskHealthApp(ctk.CTk):
     def _on_lang_change(self, choice: str):
         if self._formatting or self._cleaning_cache:
             return
-        self.lang = "es" if choice == t("lang_es", "es") else "en"
+        raw = (choice or "").strip().lower()
+        if (
+            choice == t("lang_es", "es")
+            or raw in ("español", "espanol", "es", "spanish")
+            or raw.startswith("espa")
+        ):
+            self.lang = "es"
+        else:
+            self.lang = "en"
         self.settings["lang"] = self.lang
         save_settings(self.settings)
         self.lang_var.set(self._lang_display())
@@ -3777,6 +3786,9 @@ class DiskHealthApp(ctk.CTk):
         self.settings_btn.configure(text=f"\u2699  {t('settings', self.lang)}")
         if self._tools_btn is not None:
             self._tools_btn.configure(text=f"{t('other_tools', self.lang)}  \u25bc")
+        elif getattr(self, "tools_btn", None) is not None:
+            self.tools_btn.configure(text=f"{t('other_tools', self.lang)}  \u25bc")
+            self._tools_btn = self.tools_btn
         self.lang_menu.configure(values=[t("lang_es", "es"), t("lang_en", "en")])
         self.reports_label.configure(
             text=f"{t('reports_folder', self.lang)}: {get_reports_dir()}"

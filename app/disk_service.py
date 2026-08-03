@@ -75,14 +75,35 @@ def get_default_reports_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Documents", "DiskHealthReport")
 
 
+def _normalize_reports_path(path: str) -> str:
+    return os.path.normpath(os.path.expanduser(os.path.expandvars(str(path).strip())))
+
+
+def _dir_is_usable(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".dhr_write_test")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
 def get_reports_dir() -> str:
-    custom = load_settings().get("reports_dir")
+    """
+    Carpeta de reportes elegida por el usuario (persiste en %APPDATA%).
+    Se conserva entre actualizaciones; no vuelve a Documents si ya hay ruta guardada.
+    """
+    settings = load_settings()
+    custom = settings.get("reports_dir")
     if custom:
-        try:
-            os.makedirs(custom, exist_ok=True)
+        custom = _normalize_reports_path(custom)
+        if _dir_is_usable(custom):
             return custom
-        except OSError:
-            pass
+        if os.path.isdir(custom):
+            return custom
     default = get_default_reports_dir()
     os.makedirs(default, exist_ok=True)
     return default
@@ -101,6 +122,7 @@ def resolve_report_day_dir(base: str | None = None) -> str:
 
 def set_reports_dir(path: str) -> str:
     """Valida/crea la carpeta y la guarda en settings. Devuelve la ruta efectiva."""
+    path = _normalize_reports_path(path)
     os.makedirs(path, exist_ok=True)
     settings = load_settings()
     settings["reports_dir"] = path
@@ -115,19 +137,52 @@ def get_settings_path() -> str:
 
 
 def load_settings() -> dict:
-    path = get_settings_path()
-    if os.path.exists(path):
+    candidates = [get_settings_path()]
+    local_backup = os.path.join(
+        os.environ.get("LOCALAPPDATA", ""), "DiskHealthReport", "settings.json"
+    )
+    if local_backup and local_backup not in candidates:
+        candidates.append(local_backup)
+
+    for path in candidates:
+        if not path or not os.path.exists(path):
+            continue
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            if isinstance(data, dict):
+                # Compat con claves antiguas
+                if "reports_dir" not in data and data.get("reports_folder"):
+                    data["reports_dir"] = data["reports_folder"]
+                # Restaurar Roaming si solo había backup local
+                primary = get_settings_path()
+                if path != primary and data:
+                    try:
+                        save_settings(data)
+                    except OSError:
+                        pass
+                return data
         except (json.JSONDecodeError, OSError):
-            pass
+            continue
     return {"lang": DEFAULT_LANG}
 
 
 def save_settings(settings: dict) -> None:
-    with open(get_settings_path(), "w", encoding="utf-8") as f:
+    path = get_settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
+    # Copia de respaldo (sobrevive reinstalar / fallo de Roaming)
+    try:
+        local = os.path.join(
+            os.environ.get("LOCALAPPDATA", ""), "DiskHealthReport", "settings.json"
+        )
+        if local and local != path:
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w", encoding="utf-8") as f:
+                json.dump(settings, f, indent=2)
+    except OSError:
+        pass
 
 
 def is_admin() -> bool:

@@ -103,9 +103,10 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifnotsilent shellexec
 
 [UninstallDelete]
-; Runtime extracts (smartctl cache etc.) — keep user reports in Documents
+; Runtime extracts (smartctl cache etc.) — keep user reports + settings in APPDATA
 Type: filesandordirs; Name: "{localappdata}\{#MyAppNameShort}\runtime"
 Type: files; Name: "{app}\*.log"
+; Nunca borrar %APPDATA%\DiskHealthReport\settings.json (carpeta de reportes / idioma)
 
 [Messages]
 english.WelcomeLabel1=Welcome to [name] Setup
