@@ -159,6 +159,8 @@ class DiskHealthApp(ctk.CTk):
         self.disks: list[DiskInfo] = []
         self._prev_disk_ids: set[str] = set()
         self._scanning = False
+        self._rescan_pending = False
+        self._rescan_job = None
         self._building = False
         self._silent_scan = False
         self._status_key = ""
@@ -257,6 +259,8 @@ class DiskHealthApp(ctk.CTk):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Escuchar hot-plug desde el inicio, incluso durante el primer escaneo.
+        self._ensure_watcher([])
         self.after(300, lambda: self._scan_disks(silent=False))
 
     def _schedule_ui(self, fn, *args, **kwargs):
@@ -1345,11 +1349,24 @@ class DiskHealthApp(ctk.CTk):
 
     def _on_update_apply_done(self):
         self._set_update_progress(1.0, "done")
-        # El instalador silencioso cerrará y reiniciará la app.
+        # Helper ya está en marcha: cerrar YA para liberar el EXE / mutex.
+        # Tras el cierre → UAC → Setup silencioso → reabre la app.
+        def _quit_for_update():
+            try:
+                self.destroy()
+            except Exception:
+                pass
+            try:
+                import os
+
+                os._exit(0)
+            except Exception:
+                pass
+
         try:
-            self.after(800, self.destroy)
+            self.after(400, _quit_for_update)
         except Exception:
-            pass
+            _quit_for_update()
 
     def _on_update_apply_failed(self, exc, info):
         import app_updater
@@ -3689,11 +3706,41 @@ class DiskHealthApp(ctk.CTk):
         self._stop_usage_poll()
         if self._disk_watcher:
             self._disk_watcher.stop()
+        if self._rescan_job:
+            try:
+                self.after_cancel(self._rescan_job)
+            except Exception:
+                pass
+            self._rescan_job = None
         self.destroy()
 
     def _on_devices_changed(self):
         if self._scanning or self._building or self._formatting or self._cleaning_cache:
+            self._queue_pending_rescan()
             return
+        self._scan_disks(silent=True)
+
+    def _queue_pending_rescan(self):
+        """Conserva eventos USB recibidos mientras una operación está ocupada."""
+        self._rescan_pending = True
+        if self._rescan_job is not None:
+            return
+        try:
+            self._rescan_job = self.after(750, self._try_pending_rescan)
+        except Exception:
+            self._rescan_job = None
+
+    def _try_pending_rescan(self):
+        self._rescan_job = None
+        if not self._rescan_pending:
+            return
+        if self._scanning or self._building or self._formatting or self._cleaning_cache:
+            try:
+                self._rescan_job = self.after(750, self._try_pending_rescan)
+            except Exception:
+                self._rescan_job = None
+            return
+        self._rescan_pending = False
         self._scan_disks(silent=True)
 
     def _show_transient_status(self, key: str, duration_ms: int = 4000):
@@ -3949,6 +3996,7 @@ class DiskHealthApp(ctk.CTk):
 
     def _scan_disks(self, silent: bool = False):
         if self._scanning:
+            self._queue_pending_rescan()
             return
         self._scanning = True
         self._silent_scan = silent
@@ -3994,7 +4042,10 @@ class DiskHealthApp(ctk.CTk):
     def _ensure_watcher(self, disks: list[DiskInfo]):
         if self._disk_watcher is None:
             self._disk_watcher = DiskWatcher(self, on_change=self._on_devices_changed)
-        self._disk_watcher.sync(frozenset(d.path for d in disks))
+        self._disk_watcher.sync(
+            frozenset(d.path for d in disks),
+            frozenset(d.path for d in disks if d.smart_available),
+        )
 
     def _on_scan_error(self, error: str):
         self._scanning = False
@@ -4027,6 +4078,8 @@ class DiskHealthApp(ctk.CTk):
         self.empty_label.grid(row=0, column=0, pady=60)
         self._ensure_watcher([])
         self._stop_usage_poll()
+        if self._rescan_pending:
+            self._queue_pending_rescan()
 
     def _on_scan_complete(self, disks: list[DiskInfo]):
         silent = self._silent_scan
@@ -4060,6 +4113,8 @@ class DiskHealthApp(ctk.CTk):
                 self._show_transient_status("disk_removed")
             elif added and removed:
                 self._show_transient_status("disk_connected")
+        if self._rescan_pending:
+            self._queue_pending_rescan()
 
     def _cancel_flash_jobs(self):
         for job in getattr(self, "_flash_jobs", []):
@@ -5562,7 +5617,7 @@ class DiskHealthApp(ctk.CTk):
                 self._schedule_ui(self._on_report_error, t("no_smartctl", self.lang))
                 return
             self._schedule_ui(self._set_progress_pct, 33.0, update_status=False)
-            raw = get_smart_data(smartctl, disk.path)
+            raw = get_smart_data(smartctl, disk.path, disk.smartctl_type)
             if not raw or "SMART" not in raw:
                 msg = t("smart_unavailable", self.lang)
                 self._schedule_ui(self._on_report_error, msg)

@@ -59,17 +59,27 @@ def localize_sectors(sectores: str, lang: str) -> str:
     if _is_unknown(text) or low_eq(text, "no especificado"):
         return t("not_specified", lang)
 
-    match = re.search(r"(\d+)\s*B\s*(l[oó]gico|logical)", text, re.I)
+    # Escapes Unicode: evita mojibake al empaquetar en consolas Windows legacy.
+    match = re.search(
+        r"(\d+)\s*B\s*(l[o\u00f3\ufffd]gico|logical)",
+        text,
+        re.I,
+    )
     if match:
-        return t("sector_logical", lang, size=match.group(1))
+        label = "logical" if lang == "en" else "l\u00f3gico"
+        return f"{match.group(1)}B {label}"
 
     if lang == "en":
-        text = re.sub(r"\bl[oó]gico\b", "logical", text, flags=re.I)
-        text = re.sub(r"\bf[ií]sico\b", "physical", text, flags=re.I)
+        text = re.sub(
+            r"\bl[o\u00f3\ufffd]gico\b", "logical", text, flags=re.I
+        )
+        text = re.sub(
+            r"\bf[i\u00ed\ufffd]sico\b", "physical", text, flags=re.I
+        )
         text = re.sub(r"\bbytes\b", "bytes", text, flags=re.I)
     else:
-        text = re.sub(r"\blogical\b", "lógico", text, flags=re.I)
-        text = re.sub(r"\bphysical\b", "físico", text, flags=re.I)
+        text = re.sub(r"\blogical\b", "l\u00f3gico", text, flags=re.I)
+        text = re.sub(r"\bphysical\b", "f\u00edsico", text, flags=re.I)
     return text
 
 

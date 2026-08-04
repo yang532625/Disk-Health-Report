@@ -32,6 +32,10 @@ def run_cli():
     except ValueError:
         sys.exit(1)
 
-    raw = get_smart_data(smartctl, disks[sel].path)
+    raw = get_smart_data(
+        smartctl,
+        disks[sel].path,
+        disks[sel].smartctl_type,
+    )
     procesar_volcado(raw)
     _wait_exit()

@@ -1,6 +1,6 @@
 import conftest_path  # noqa: F401
 # -*- coding: utf-8 -*-
-"""Tests de localizaciÃ³n del reporte PDF."""
+"""Tests de localización del reporte PDF."""
 
 import os
 import sys
@@ -25,7 +25,10 @@ class TestReportI18n(unittest.TestCase):
         self.assertEqual(localize_link_speed("No especificada", "en"), "Not specified")
 
     def test_sectors_english(self):
-        self.assertEqual(localize_sectors("512B lÃ³gico", "en"), "512B logical")
+        self.assertEqual(
+            localize_sectors("512B l\u00f3gico", "en"),
+            "512B logical",
+        )
 
     def test_nvme_identification_english(self):
         report = parsear_smartctl(_load_sample("xraydisk_dump.txt"))
@@ -39,7 +42,7 @@ class TestReportI18n(unittest.TestCase):
         report = parsear_smartctl(_load_sample("smartctl_sample.txt"))
         ident = localize_identification(report, "es")
         self.assertEqual(format_rotation_rate(report, "es"), "5400 RPM")
-        self.assertIn("lÃ³gico", localize_sectors(report.sectores, "es"))
+        self.assertIn("l\u00f3gico", localize_sectors(report.sectores, "es"))
 
 
 if __name__ == "__main__":

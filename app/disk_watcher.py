@@ -16,7 +16,8 @@ import threading
 from ctypes import wintypes
 from typing import Callable, Optional
 
-from disk_service import get_smartctl_path, scan_disks
+from app_logging import log_message
+from disk_service import disk_signature_key, get_smartctl_path, scan_disk_signature
 
 WM_DEVICECHANGE = 0x0219
 WM_CLOSE = 0x0010
@@ -32,9 +33,9 @@ DEVICE_NOTIFY_ALL_INTERFACE_CLASSES = 0x00000004
 DBT_DEVTYP_DEVICEINTERFACE = 0x00000005
 
 # Intervalo del sondeo de respaldo (mucho mayor que el polling original).
-FALLBACK_INTERVAL_MS = 20000
-# Antirrebote tras un evento de hardware antes de re-escanear.
-DEBOUNCE_MS = 350
+FALLBACK_INTERVAL_MS = 15000
+# Los puentes USB y HDD mecánicos pueden tardar varios segundos en estar listos.
+HOTPLUG_RETRY_DELAYS_MS = (1000, 3000, 6000, 10000)
 
 
 if sys.platform == "win32":
@@ -76,9 +77,10 @@ class DiskWatcher:
         self._interval = interval_ms
         self._running = True
         self._polling = False
+        self._poll_pending = False
         self._last_signature: Optional[frozenset[str]] = None
         self._job = None
-        self._debounce_job = None
+        self._retry_jobs: list = []
 
         # Ventana nativa de eventos de hardware.
         self._hwnd = None
@@ -95,9 +97,17 @@ class DiskWatcher:
         self._job = self._root.after(interval_ms, self._schedule_poll)
 
     # ------------------------------------------------------------------ API
-    def sync(self, paths: frozenset[str]) -> None:
+    def sync(
+        self,
+        paths: frozenset[str],
+        smart_paths: frozenset[str] = frozenset(),
+    ) -> None:
         """Actualiza la firma tras un escaneo manual para evitar falsos positivos."""
-        self._last_signature = paths
+        signature = {disk_signature_key(path) for path in paths}
+        signature.update(
+            f"smart:{disk_signature_key(path)}" for path in smart_paths
+        )
+        self._last_signature = frozenset(signature)
 
     def stop(self):
         self._running = False
@@ -107,12 +117,12 @@ class DiskWatcher:
             except Exception:
                 pass
             self._job = None
-        if self._debounce_job:
+        for retry_job in self._retry_jobs:
             try:
-                self._root.after_cancel(self._debounce_job)
+                self._root.after_cancel(retry_job)
             except Exception:
                 pass
-            self._debounce_job = None
+        self._retry_jobs = []
         if sys.platform == "win32" and self._hwnd:
             try:
                 ctypes.windll.user32.PostMessageW(self._hwnd, WM_CLOSE, 0, 0)
@@ -167,6 +177,7 @@ class DiskWatcher:
 
             atom = user32.RegisterClassW(ctypes.byref(wndclass))
             if not atom:
+                log_message("RegisterClassW failed; using polling", context="disk-watcher")
                 return
 
             self._hwnd = user32.CreateWindowExW(
@@ -174,6 +185,7 @@ class DiskWatcher:
                 0, 0, 0, 0, HWND_MESSAGE, None, wndclass.hInstance, None,
             )
             if not self._hwnd:
+                log_message("CreateWindowExW failed; using polling", context="disk-watcher")
                 return
 
             self._register_device_notification(user32)
@@ -182,8 +194,8 @@ class DiskWatcher:
             while self._running and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message(f"Native watcher failed: {exc}", context="disk-watcher")
 
     def _register_device_notification(self, user32):
         try:
@@ -194,8 +206,12 @@ class DiskWatcher:
                 self._hwnd, ctypes.byref(dbi),
                 DEVICE_NOTIFY_WINDOW_HANDLE | DEVICE_NOTIFY_ALL_INTERFACE_CLASSES,
             )
-        except Exception:
+        except Exception as exc:
             self._notify_handle = None
+            log_message(
+                f"RegisterDeviceNotificationW failed: {exc}",
+                context="disk-watcher",
+            )
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         user32 = ctypes.windll.user32
@@ -217,35 +233,48 @@ class DiskWatcher:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _notify_from_native(self):
-        """Programa una verificación con antirrebote en el hilo de Tk."""
+        """Programa reintentos escalonados en el hilo de Tk."""
         if not self._running:
             return
         try:
-            self._root.after(0, self._schedule_debounced_check)
-        except Exception:
-            pass
+            self._root.after(0, self._schedule_hotplug_checks)
+        except Exception as exc:
+            log_message(f"Could not schedule hotplug check: {exc}", context="disk-watcher")
 
-    def _schedule_debounced_check(self):
+    def _schedule_hotplug_checks(self):
         if not self._running:
             return
-        if self._debounce_job:
+        for retry_job in self._retry_jobs:
             try:
-                self._root.after_cancel(self._debounce_job)
+                self._root.after_cancel(retry_job)
             except Exception:
                 pass
-        self._debounce_job = self._root.after(DEBOUNCE_MS, self._run_signature_check)
+        self._retry_jobs = [
+            self._root.after(delay, lambda d=delay: self._run_signature_check(d))
+            for delay in HOTPLUG_RETRY_DELAYS_MS
+        ]
 
-    def _run_signature_check(self):
-        self._debounce_job = None
+    def _run_signature_check(self, delay_ms: int = 0):
+        self._retry_jobs = [
+            job for job in self._retry_jobs
+            if job is not None
+        ]
         self._schedule_poll(force=True)
 
     # ---------------------------------------------------- sondeo / firma
+    def _schedule_fallback(self):
+        if self._running and self._job is None:
+            self._job = self._root.after(self._interval, self._schedule_poll)
+
     def _schedule_poll(self, force: bool = False):
         if not self._running:
             return
         if not force:
-            self._job = self._root.after(self._interval, self._schedule_poll)
+            self._job = None
         if self._polling:
+            if force:
+                self._poll_pending = True
+            self._schedule_fallback()
             return
         self._polling = True
 
@@ -254,11 +283,9 @@ class DiskWatcher:
             try:
                 smartctl = get_smartctl_path()
                 if smartctl:
-                    signature = frozenset(
-                        entry["comando"] for entry in scan_disks(smartctl)
-                    )
-            except Exception:
-                pass
+                    signature = scan_disk_signature(smartctl)
+            except Exception as exc:
+                log_message(f"Signature poll failed: {exc}", context="disk-watcher")
             try:
                 self._root.after(0, lambda: self._on_poll_done(signature))
             except Exception:
@@ -268,14 +295,28 @@ class DiskWatcher:
 
     def _on_poll_done(self, signature: Optional[frozenset[str]]):
         self._polling = False
+        poll_again = self._poll_pending
+        self._poll_pending = False
         if not self._running or signature is None:
+            if poll_again and self._running:
+                self._schedule_poll(force=True)
+            else:
+                self._schedule_fallback()
             return
         if self._last_signature is None:
             self._last_signature = signature
+            if poll_again:
+                self._schedule_poll(force=True)
+            else:
+                self._schedule_fallback()
             return
         if signature != self._last_signature:
             self._last_signature = signature
             try:
                 self._on_change()
-            except Exception:
-                pass
+            except Exception as exc:
+                log_message(f"on_change failed: {exc}", context="disk-watcher")
+        if poll_again and self._running:
+            self._schedule_poll(force=True)
+        else:
+            self._schedule_fallback()

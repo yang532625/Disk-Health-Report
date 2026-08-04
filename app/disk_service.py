@@ -54,6 +54,7 @@ class DiskInfo:
     brand: str = "Unknown"
     category: DiskCategory = "system"
     transport: str = ""
+    smartctl_type: str = ""
 
 
 def get_project_root() -> str:
@@ -475,21 +476,7 @@ def _detect_transport(raw: str, description: str) -> str:
 
 
 def _wmi_usb_serials() -> set[str]:
-    if sys.platform != "win32":
-        return set()
-    try:
-        result = _run_hidden(
-            [
-                "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-                "Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | "
-                "Where-Object { $_.InterfaceType -eq 'USB' } | "
-                "ForEach-Object { $_.SerialNumber.Trim() }",
-            ],
-            timeout=_WMI_TIMEOUT,
-        )
-        return {s.strip() for s in result.stdout.splitlines() if s.strip()}
-    except Exception:
-        return set()
+    return _usb_serials_from_rows(_wmi_physical_disks())
 
 
 def _wmi_physical_disks() -> list[dict]:
@@ -500,7 +487,8 @@ def _wmi_physical_disks() -> list[dict]:
             [
                 "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
                 "Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | "
-                "Select-Object Index, SerialNumber, Model, PNPDeviceID, Size | "
+                "Select-Object Index, SerialNumber, Model, PNPDeviceID, "
+                "InterfaceType, Size | "
                 "ConvertTo-Json -Depth 3 -Compress",
             ],
             timeout=_WMI_TIMEOUT,
@@ -522,11 +510,86 @@ def _wmi_physical_disks() -> list[dict]:
                 "serial": (item.get("SerialNumber") or "").strip(),
                 "model": (item.get("Model") or "").strip(),
                 "pnp": (item.get("PNPDeviceID") or "").strip(),
+                "interface": (item.get("InterfaceType") or "").strip(),
                 "size": size,
             })
         return rows
     except Exception:
+        try:
+            from app_logging import log_message
+            log_message("Win32_DiskDrive enumeration failed", context="usb-detection")
+        except Exception:
+            pass
         return []
+
+
+def _windows_row_is_usb(row: dict) -> bool:
+    text = " ".join(
+        str(row.get(key) or "") for key in ("interface", "pnp", "model")
+    ).lower()
+    return "usb" in text or "usbstor" in text
+
+
+def _usb_serials_from_rows(rows: list[dict]) -> set[str]:
+    return {
+        serial
+        for row in rows
+        if _windows_row_is_usb(row)
+        if (serial := _norm_serial(row.get("serial", "")))
+    }
+
+
+def _windows_scan_entries(rows: list[dict]) -> list[dict]:
+    """Convierte discos que Windows ve en candidatos compatibles con smartctl."""
+    entries: list[dict] = []
+    for row in rows:
+        try:
+            idx = int(row.get("index", -1))
+        except (TypeError, ValueError):
+            continue
+        if idx < 0:
+            continue
+        model = (row.get("model") or "").strip() or "Windows physical disk"
+        interface = (row.get("interface") or "").strip()
+        usb = _windows_row_is_usb(row)
+        description = f"{model} ({'USB' if usb else interface or 'Windows'})"
+        entries.append(
+            {
+                "comando": f"/dev/pd{idx}",
+                "descripcion": description,
+                "device_type": "sat,auto" if usb else "",
+                "source": "windows",
+            }
+        )
+    return entries
+
+
+def _merge_scan_entries(*groups: list[dict]) -> list[dict]:
+    """Une smartctl y Windows sin perder el mejor descriptor por índice/ruta."""
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for group in groups:
+        for entry in group:
+            path = str(entry.get("comando") or "").strip()
+            if not path:
+                continue
+            idx = _disk_index_from_path(path)
+            key = f"pd:{idx}" if idx is not None else path.lower()
+            if key not in merged:
+                merged[key] = dict(entry)
+                order.append(key)
+                continue
+            current = merged[key]
+            # smartctl aporta el tipo correcto; Windows suele aportar mejor modelo.
+            if entry.get("source") == "smartctl":
+                current["comando"] = path
+                if entry.get("device_type"):
+                    current["device_type"] = entry["device_type"]
+            current_desc = str(current.get("descripcion") or "")
+            new_desc = str(entry.get("descripcion") or "")
+            if "unknown" in current_desc.lower() or len(new_desc) > len(current_desc):
+                current["descripcion"] = new_desc
+    return [merged[key] for key in order]
 
 
 def _enrich_disk_from_windows(info: DiskInfo, wmi_rows: list[dict]) -> None:
@@ -584,7 +647,7 @@ def classify_disk(
     raw_lower = raw.lower()
     model_lower = (info.model or "").lower()
 
-    if usb_serials and info.serial and info.serial.strip() in usb_serials:
+    if usb_serials and _norm_serial(info.serial) in usb_serials:
         return "external"
 
     if info.transport == "USB":
@@ -659,23 +722,105 @@ def disk_identity(disk: DiskInfo) -> str:
     return disk.path
 
 
+def disk_signature_key(path: str) -> str:
+    """Clave estable para comparar rutas smartctl y PhysicalDrive de Windows."""
+    idx = _disk_index_from_path(path)
+    if idx is not None:
+        return f"pd:{idx}"
+    return str(path or "").strip().lower()
+
+
+def _parse_scan_output(output: str) -> list[dict]:
+    disks: list[dict] = []
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        command_part, _, comment = line.partition("#")
+        tokens = command_part.strip().split()
+        if not tokens:
+            continue
+        device_type = ""
+        try:
+            pos = tokens.index("-d")
+            if pos + 1 < len(tokens):
+                device_type = tokens[pos + 1]
+        except ValueError:
+            pass
+        disks.append(
+            {
+                "comando": tokens[0],
+                "descripcion": comment.strip() or "Unknown device",
+                "device_type": device_type,
+                "source": "smartctl",
+            }
+        )
+    return disks
+
+
 def scan_disks(smartctl_path: str) -> list[dict]:
     try:
-        resultado = _run_hidden(
+        result = _run_hidden(
             [smartctl_path, "--scan"],
             timeout=_SMARTCTL_SCAN_TIMEOUT,
-            check=True,
         )
-        discos = []
-        for linea in resultado.stdout.strip().split("\n"):
-            if linea.strip() and not linea.startswith("#"):
-                partes = linea.split("#")
-                comando = partes[0].strip().split()[0]
-                descripcion = partes[1].strip() if len(partes) > 1 else "Unknown device"
-                discos.append({"comando": comando, "descripcion": descripcion})
-        return discos
-    except Exception:
+        disks = _parse_scan_output(result.stdout)
+        if result.returncode and (disks or result.stderr.strip()):
+            try:
+                from app_logging import log_message
+                log_message(
+                    f"smartctl --scan exit={result.returncode}; "
+                    f"parsed={len(disks)}; stderr={result.stderr.strip()[:400]}",
+                    context="usb-detection",
+                )
+            except Exception:
+                pass
+        return disks
+    except Exception as exc:
+        try:
+            from app_logging import log_message
+            log_message(f"smartctl --scan failed: {exc}", context="usb-detection")
+        except Exception:
+            pass
         return []
+
+
+def scan_disk_signature(smartctl_path: str) -> frozenset[str]:
+    """Firma combinada: detecta presencia y cuándo smartctl queda listo."""
+    smart_entries = scan_disks(smartctl_path)
+    windows_entries = _windows_scan_entries(_wmi_physical_disks())
+    merged = _merge_scan_entries(smart_entries, windows_entries)
+    signature = {
+        disk_signature_key(entry["comando"])
+        for entry in merged
+    }
+    signature.update(
+        f"smart:{disk_signature_key(entry['comando'])}"
+        for entry in smart_entries
+    )
+    return frozenset(signature)
+
+
+def _smartctl_info_command(
+    smartctl_path: str,
+    disk_path: str,
+    device_type: str = "",
+) -> list[str]:
+    command = [smartctl_path, "-i"]
+    if device_type:
+        command.extend(["-d", device_type])
+    command.append(disk_path)
+    return command
+
+
+def _has_smart_identity(raw: str) -> bool:
+    return bool(
+        re.search(
+            r"(?im)^(?:Device Model|Model Number|Serial Number|User Capacity|"
+            r"Namespace 1 Size/Capacity|Product|Vendor):",
+            raw or "",
+        )
+    )
 
 
 def get_disk_info(
@@ -683,26 +828,56 @@ def get_disk_info(
     disk_path: str,
     description: str = "",
     usb_serials: Optional[set[str]] = None,
+    device_type: str = "",
 ) -> DiskInfo:
     info = DiskInfo(path=disk_path, description=description or disk_path)
     raw = ""
+    attempts: list[str] = []
+    for candidate in (device_type, "", "sat,auto", "scsi"):
+        if candidate not in attempts:
+            attempts.append(candidate)
+    # No probar adaptadores extra para dispositivos internos identificados claramente.
+    usb_hint = "usb" in (description or "").lower() or "scsi device" in (
+        description or ""
+    ).lower() or device_type.lower() in ("sat", "sat,auto", "scsi")
+    if not usb_hint:
+        attempts = attempts[:2] if device_type else attempts[:1]
 
-    try:
-        resultado = _run_hidden(
-            [smartctl_path, "-i", disk_path],
-            timeout=_SMARTCTL_INFO_TIMEOUT,
-        )
-        raw = resultado.stdout + resultado.stderr
-    except subprocess.TimeoutExpired:
+    last_error = ""
+    for candidate in attempts:
+        try:
+            result = _run_hidden(
+                _smartctl_info_command(smartctl_path, disk_path, candidate),
+                timeout=_SMARTCTL_INFO_TIMEOUT,
+            )
+            candidate_raw = result.stdout + result.stderr
+            if len(candidate_raw) > len(raw):
+                raw = candidate_raw
+            if _has_smart_identity(candidate_raw):
+                raw = candidate_raw
+                info.smartctl_type = candidate
+                if candidate and not info.interface:
+                    info.interface = candidate
+                break
+            last_error = f"exit={result.returncode}"
+        except subprocess.TimeoutExpired:
+            last_error = "timeout"
+            # Un bridge bloqueado no debe repetir otros tres timeouts.
+            break
+        except Exception as exc:
+            last_error = str(exc)
+
+    if not _has_smart_identity(raw):
         info.smart_available = False
-        info.brand = extract_brand(info.model)
-        info.category = classify_disk(info, description, raw, usb_serials)
-        return info
-    except Exception:
-        info.smart_available = False
-        info.brand = extract_brand(info.model)
-        info.category = classify_disk(info, description, raw, usb_serials)
-        return info
+        if last_error:
+            try:
+                from app_logging import log_message
+                log_message(
+                    f"smartctl -i unavailable for {disk_path}: {last_error}",
+                    context="usb-detection",
+                )
+            except Exception:
+                pass
 
     if "SMART support is: Unavailable" in raw or "Read SMART Data failed" in raw:
         info.smart_available = False
@@ -722,8 +897,10 @@ def get_disk_info(
     info.serial = _search(r"Serial Number:\s+(.+)", raw)
     info.capacity = _parse_capacity(raw)
 
-    info.interface = _search(r"SATA Version is:\s+(.+)", raw) or _search(
-        r"Transport protocol:\s+(.+)", raw
+    info.interface = (
+        _search(r"SATA Version is:\s+(.+)", raw)
+        or _search(r"Transport protocol:\s+(.+)", raw)
+        or info.interface
     )
     info.rotation = _search(r"Rotation Rate:\s+(.+)", raw) or _search(
         r"Rotation Speed:\s+(.+)", raw
@@ -746,8 +923,12 @@ def scan_disks_with_info(
     smartctl_path: str,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> list[DiskInfo]:
-    usb_serials = _wmi_usb_serials()
-    raw_entries = scan_disks(smartctl_path)
+    wmi_rows = _wmi_physical_disks()
+    usb_serials = _usb_serials_from_rows(wmi_rows)
+    raw_entries = _merge_scan_entries(
+        scan_disks(smartctl_path),
+        _windows_scan_entries(wmi_rows),
+    )
     disks: list[DiskInfo] = []
     total = len(raw_entries) or 1
 
@@ -758,12 +939,13 @@ def scan_disks_with_info(
                 entry["comando"],
                 entry["descripcion"],
                 usb_serials,
+                entry.get("device_type", ""),
             )
         )
         if progress_cb:
             progress_cb(i + 1, total)
 
-    if not disks:
+    if not disks and not wmi_rows:
         fallback = "/dev/pd0"
         disks.append(
             get_disk_info(smartctl_path, fallback, "Primary physical drive", usb_serials)
@@ -771,17 +953,29 @@ def scan_disks_with_info(
         if progress_cb:
             progress_cb(1, 1)
 
-    wmi_rows = _wmi_physical_disks()
     for disk in disks:
         _enrich_disk_from_windows(disk, wmi_rows)
+        idx = _disk_index_from_path(disk.path)
+        row = next((item for item in wmi_rows if item.get("index") == idx), None)
+        if row and _windows_row_is_usb(row):
+            disk.transport = "USB"
+        disk.category = classify_disk(disk, disk.description, "", usb_serials)
 
     return deduplicate_disks(disks)
 
 
-def get_smart_data(smartctl_path: str, disk_path: str) -> str:
+def get_smart_data(
+    smartctl_path: str,
+    disk_path: str,
+    device_type: str = "",
+) -> str:
     try:
+        command = [smartctl_path, "-a"]
+        if device_type:
+            command.extend(["-d", device_type])
+        command.append(disk_path)
         resultado = _run_hidden(
-            [smartctl_path, "-a", disk_path],
+            command,
             timeout=_SMARTCTL_DATA_TIMEOUT,
         )
         return resultado.stdout

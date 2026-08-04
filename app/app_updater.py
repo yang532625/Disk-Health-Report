@@ -199,23 +199,114 @@ def download_installer(
     return dest
 
 
-def launch_installer(path: str, *, silent: bool = False, install_dir: str | None = None) -> None:
-    """Abre el Setup. silent=True: actualización elevada que sobrescribe la instalación."""
-    path = os.path.abspath(path)
-    if not os.path.isfile(path):
-        raise FileNotFoundError(path)
-    if not silent:
-        os.startfile(path)  # noqa: S606 — Windows installer launch
-        return
+def _ps_single_quote(value: str) -> str:
+    """Comilla un literal para PowerShell (comillas simples)."""
+    return "'" + str(value).replace("'", "''") + "'"
 
-    # PrivilegesRequired=admin + misma carpeta (/DIR) = sobrescribe, no instala en paralelo.
+
+def schedule_silent_update(
+    installer_path: str,
+    *,
+    install_dir: str | None = None,
+) -> str:
+    """
+    Patrón profesional de actualización Inno/Windows:
+    1) Eleva un helper (UAC) mientras la app aún puede mostrarlo.
+    2) La app debe cerrarse justo después (libera AppMutex).
+    3) El helper espera el cierre, fuerza fin de procesos residuales,
+       instala en silencio sobre la misma carpeta y reabre la app.
+
+    Importante: no lanzar Setup.exe mientras AppMutex sigue activo —
+    con /SUPPRESSMSGBOXES Inno cancela el diálogo "app is running".
+    """
     from disk_service import get_install_dir
 
-    target = install_dir or get_install_dir()
-    params = (
-        "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
-        "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS "
-        f'/DIR="{target}"'
+    setup = os.path.abspath(installer_path)
+    if not os.path.isfile(setup):
+        raise FileNotFoundError(setup)
+
+    target = os.path.abspath(install_dir or get_install_dir())
+    temp = tempfile.gettempdir()
+    log_path = os.path.join(temp, "DiskHealthReport_update.log")
+    setup_log = os.path.join(temp, "DiskHealthReport_setup.log")
+    ps1 = os.path.join(temp, f"DiskHealthReport_update_{os.getpid()}.ps1")
+    exe_path = os.path.join(target, "DiskHealthReport.exe")
+    wait_pid = os.getpid()
+
+    script = f"""# Disk Health Report — silent update helper (run elevated)
+param([int]$WaitPid = 0)
+$ErrorActionPreference = 'Continue'
+$log = {_ps_single_quote(log_path)}
+$setup = {_ps_single_quote(setup)}
+$installDir = {_ps_single_quote(target)}
+$setupLog = {_ps_single_quote(setup_log)}
+$exe = {_ps_single_quote(exe_path)}
+function Write-UpdateLog([string]$Message) {{
+  $line = '{{0:yyyy-MM-dd HH:mm:ss}} {{1}}' -f (Get-Date), $Message
+  try {{ Add-Content -LiteralPath $log -Value $line -Encoding UTF8 }} catch {{}}
+}}
+try {{
+  Write-UpdateLog 'Elevated helper started'
+  Write-UpdateLog ("Installer=" + $setup)
+  Write-UpdateLog ("InstallDir=" + $installDir)
+  Write-UpdateLog ("WaitPid=" + $WaitPid)
+  $deadline = (Get-Date).AddSeconds(90)
+  do {{
+    $appProcs = @(Get-Process -Name 'DiskHealthReport' -ErrorAction SilentlyContinue)
+    $waitAlive = $false
+    if ($WaitPid -gt 0) {{
+      $waitAlive = $null -ne (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue)
+    }}
+    if (-not $waitAlive -and $appProcs.Count -eq 0) {{
+      Write-UpdateLog 'App processes exited'
+      break
+    }}
+    Write-UpdateLog ('Waiting for exit; DiskHealthReport=' + $appProcs.Count + ' WaitPidAlive=' + $waitAlive)
+    Start-Sleep -Seconds 1
+  }} while ((Get-Date) -lt $deadline)
+
+  # Como admin: liberar AppMutex antes de Setup (si no, /SUPPRESSMSGBOXES cancela).
+  Write-UpdateLog 'Force-stopping DiskHealthReport.exe (elevated)'
+  & taskkill.exe /F /IM DiskHealthReport.exe 2>$null | Out-Null
+  Start-Sleep -Seconds 2
+
+  if (-not (Test-Path -LiteralPath $setup)) {{
+    throw "Installer missing: $setup"
+  }}
+  $argString = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="' + $installDir + '" /LOG="' + $setupLog + '"'
+  Write-UpdateLog ('Starting Setup: ' + $argString)
+  $p = Start-Process -FilePath $setup -ArgumentList $argString -PassThru
+  # Process.WaitForExit espera solo Setup.exe. Start-Process -Wait también espera
+  # descendientes y quedaba vivo mientras la app recién lanzada siguiera abierta.
+  $p.WaitForExit()
+  $code = if ($null -ne $p) {{ $p.ExitCode }} else {{ -1 }}
+  Write-UpdateLog ("Setup exit code=" + $code)
+  if ($code -ne 0 -and $null -ne $code) {{
+    throw "Setup failed with exit code $code"
+  }}
+
+  Start-Sleep -Seconds 1
+  $running = @(Get-Process -Name 'DiskHealthReport' -ErrorAction SilentlyContinue)
+  if ($running.Count -eq 0 -and (Test-Path -LiteralPath $exe)) {{
+    Write-UpdateLog 'Relaunching DiskHealthReport.exe'
+    Start-Process -FilePath $exe
+  }} else {{
+    Write-UpdateLog ('Relaunch skipped; running=' + $running.Count)
+  }}
+  Write-UpdateLog 'Helper finished OK'
+}} catch {{
+  Write-UpdateLog ('Helper FAILED: ' + $_.Exception.Message)
+  exit 1
+}}
+"""
+    with open(ps1, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+
+    # Elevar YA (UAC visible); el helper espera a que esta app cierre.
+    # No elevar Setup.exe directo: AppMutex + SUPPRESSMSGBOXES = cancel.
+    ps_args = (
+        f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
+        f'-File "{ps1}" -WaitPid {wait_pid}'
     )
     if sys.platform == "win32":
         import ctypes
@@ -224,28 +315,36 @@ def launch_installer(path: str, *, silent: bool = False, install_dir: str | None
             ctypes.windll.shell32.ShellExecuteW(
                 None,
                 "runas",
-                path,
-                params,
-                os.path.dirname(path) or None,
-                1,
+                "powershell.exe",
+                ps_args,
+                temp,
+                0,  # SW_HIDE
             )
         )
-        # ShellExecute: >32 = éxito; 1223 / ERROR_CANCELLED ≈ usuario canceló UAC
         if rc <= 32:
             if rc in (1223, 0):
                 raise RuntimeError("UAC cancelled")
-            raise RuntimeError(f"Installer launch failed (ShellExecute={rc})")
-        return
+            raise RuntimeError(f"Update helper launch failed (ShellExecute={rc})")
+        return log_path
 
-    creation = 0
-    creation |= getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-    creation |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
     subprocess.Popen(  # noqa: S603
-        [path] + params.split(),
-        cwd=os.path.dirname(path) or None,
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1,
+         "-WaitPid", str(wait_pid)],
+        cwd=temp,
         close_fds=True,
-        creationflags=creation,
     )
+    return log_path
+
+
+def launch_installer(path: str, *, silent: bool = False, install_dir: str | None = None) -> None:
+    """Abre el Setup. silent=True: programa instalación tras cerrar la app."""
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    if not silent:
+        os.startfile(path)  # noqa: S606 — Windows installer launch
+        return
+    schedule_silent_update(path, install_dir=install_dir)
 
 
 def apply_update(
@@ -255,8 +354,8 @@ def apply_update(
     silent: bool = True,
 ) -> str:
     """
-    Descarga (si hace falta) y lanza el instalador.
-    Progreso sugerido: descarga 0..0.85, preparar 0.85..0.95, lanzar 1.0.
+    Descarga (si hace falta) y programa el instalador.
+    Progreso: descarga 0..0.85, preparar 0.85..0.95, listo para cerrar 1.0.
     Devuelve la ruta del Setup usado.
     """
     path = ""
@@ -280,7 +379,7 @@ def apply_update(
         raise RuntimeError("No installer URL or local path")
 
     if progress_callback:
-        progress_callback(0.97, "install")
+        progress_callback(0.95, "install")
     launch_installer(path, silent=silent)
     if progress_callback:
         progress_callback(1.0, "done")

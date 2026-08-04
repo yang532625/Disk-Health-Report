@@ -116,7 +116,8 @@ spanish.FinishedLabel=La instalacion de [name] ha finalizado.%n%nLos reportes se
 
 [Code]
 const
-  UninstallRegKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppId}_is1';
+  { Coincide con clave Uninstall real (AppId historico). No cambiar AppId en config. }
+  UninstallRegKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{A3F8B2C1-4D5E-6F70-8A9B-0C1D2E3F4A5B}}}_is1';
 
 var
   IsUpdateInstall: Boolean;

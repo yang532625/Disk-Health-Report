@@ -38,6 +38,18 @@ def log_exception(exc_type, exc_value, exc_tb, context: str = "") -> str:
     return text
 
 
+def log_message(message: str, context: str = "") -> str:
+    """Registra un diagnóstico no fatal junto al crash log."""
+    prefix = f"[{context}] " if context else ""
+    text = f"\n{datetime.now().isoformat(timespec='seconds')} {prefix}{message}\n"
+    try:
+        with open(get_crash_log_path(), "a", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        pass
+    return text
+
+
 def _global_excepthook(exc_type, exc_value, exc_tb):
     log_exception(exc_type, exc_value, exc_tb, context="unhandled")
     if _PREVIOUS_HOOK and _PREVIOUS_HOOK is not _global_excepthook:
